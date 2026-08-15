@@ -14,8 +14,9 @@ directory symlink so the download does not recurse forever.
 ### Prerequisites
 
 - Python 3
-- A Google OAuth Desktop client configuration saved as `credentials.json` in
-  this project directory
+- A Google Cloud project with the Google Drive API enabled
+- A Google OAuth Desktop client configuration saved locally as
+  `credentials.json`
 
 Install the required Google libraries in a virtual environment:
 
@@ -24,6 +25,23 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
 ```
+
+### Set up Google OAuth credentials
+
+This repository does not include `credentials.json`. Each user must create
+their own OAuth Desktop client before running the utility:
+
+1. Open [Google Cloud Console](https://console.cloud.google.com/).
+2. Create a Google Cloud project.
+3. In **APIs & Services** → **Library**, enable **Google Drive API**.
+4. In **Google Auth Platform**, configure the OAuth consent screen. Add your
+   Google account as a test user if the app remains in testing mode.
+5. Create an OAuth client of type **Desktop app**.
+6. Download its JSON configuration and save it in this directory as
+   `credentials.json`.
+
+Do not commit `credentials.json` or `token.json` to Git. The first identifies
+your OAuth application; the second authorizes access to your Google account.
 
 Download a folder by URL:
 
