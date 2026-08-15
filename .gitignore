@@ -3,3 +3,4 @@ downloads/
 .venv/
 __pycache__/
 .DS_Storecredentials.json
+credentials.json
