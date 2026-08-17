@@ -2,6 +2,7 @@ import argparse
 import os.path
 from pathlib import Path
 from urllib.parse import urlparse
+import shutil
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -77,6 +78,8 @@ class DriveDownloader:
     def __init__(self, credentials, output_dir):
         self.service = build("drive", "v3", credentials=credentials)
         self.output_dir = Path(output_dir)
+        self.family_dict = {}
+        self.files_made_instead_of_shortcuts = {}
 
     def get_folder_name(self, folder_id):
         """Return the name of a Drive folder, validating the supplied ID."""
@@ -134,6 +137,26 @@ class DriveDownloader:
         print(f"Downloaded: {destination_path}")
         return True
 
+    def resolve_destination_path(self, parent_path, item_name, item_id):
+        """Return a non-conflicting local path for a listed Drive item."""
+        parent_path = Path(parent_path)
+        original_path = parent_path / item_name
+
+        if not original_path.exists() and not original_path.is_symlink():
+            return original_path
+
+        suffix = Path(item_name).suffix
+        stem = item_name[: -len(suffix)] if suffix else item_name
+        candidate = parent_path / f"{stem}__{item_id}{suffix}"
+        collision_number = 2
+
+        while candidate.exists() or candidate.is_symlink():
+            candidate = parent_path / f"{stem}__{item_id}-{collision_number}{suffix}"
+            collision_number += 1
+
+        print(f"Name conflict: {original_path} -> {candidate}")
+        return candidate
+
     def create_folder_shortcut(self, shortcut_path, target_path):
         """Create a relative local directory symlink for an ancestor shortcut."""
         shortcut_path = Path(shortcut_path)
@@ -147,29 +170,58 @@ class DriveDownloader:
         relative_target = os.path.relpath(target_path, shortcut_path.parent)
         shortcut_path.symlink_to(relative_target, target_is_directory=True)
         print(f"Created folder shortcut: {shortcut_path} -> {relative_target}")
+    
+    
+    def move_file_and_create_shortcut(self, source_path, destination_path):
+        """Move a file from source_path to destination_path and create a shortcut."""
+        source_path = Path(source_path)
+        destination_path = Path(destination_path)
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def download_folder_recursive(self, folder_id, local_path=None, ancestor_folders=None):
+        if not source_path.exists():
+            print(f"Source file does not exist: {source_path}")
+            return False
+
+        try:
+            shutil.move(str(source_path), str(destination_path))
+            print(f"Moved file: {source_path} -> {destination_path}")
+            self.create_folder_shortcut(source_path, destination_path)
+            return True
+        
+        except Exception as error:
+            print(f"Could not move {source_path} to {destination_path}: {error}")
+            return False
+        
+    
+    def download_folder_recursive(self, folder_id, local_path=None):
         """Recreate a Drive folder tree at local_path and download its files."""
         if local_path is None:
             local_path = self.output_dir / self.get_folder_name(folder_id)
         else:
             local_path = Path(local_path)
-        ancestor_folders = {} if ancestor_folders is None else ancestor_folders
 
-        if folder_id in ancestor_folders:
-            self.create_folder_shortcut(local_path, ancestor_folders[folder_id])
-            return
-
-        ancestor_folders = {**ancestor_folders, folder_id: local_path}
+        self.family_dict[folder_id] = local_path
         local_path.mkdir(parents=True, exist_ok=True)
 
         for item in self.list_folder_contents(folder_id):
-            destination_path = local_path / item["name"]
+            destination_path = self.resolve_destination_path(
+                local_path, item["name"], item["id"]
+            )
 
             if item["mimeType"] == FOLDER_MIME_TYPE:
-                self.download_folder_recursive(
-                    item["id"], destination_path, ancestor_folders
-                )
+                if item["id"] in self.files_made_instead_of_shortcuts:
+                    moved = self.move_file_and_create_shortcut(
+                        self.files_made_instead_of_shortcuts[item["id"]],
+                        destination_path)
+                    if moved:
+                        self.family_dict[item["id"]] = destination_path
+                        self.files_made_instead_of_shortcuts.pop(item["id"], None)
+                    
+                else:
+                    self.download_folder_recursive(
+                        item["id"], destination_path
+                    )
+            
             elif item["mimeType"] == SHORTCUTS_MIME_TYPE:
                 shortcut_details = item.get("shortcutDetails", {})
                 target_id = shortcut_details.get("targetId")
@@ -180,13 +232,32 @@ class DriveDownloader:
                 elif target_mime_type == SHORTCUTS_MIME_TYPE:
                     print(f"Skipped shortcut targeting another shortcut: {item['name']}")
                 elif target_mime_type == FOLDER_MIME_TYPE:
-                    self.download_folder_recursive(
-                        target_id, destination_path, ancestor_folders
-                    )
+                    if(target_id in self.family_dict):
+                        self.create_folder_shortcut(destination_path, self.family_dict[target_id])
+                    else:
+                        self.download_folder_recursive(
+                            target_id, destination_path
+                        )
+                        self.files_made_instead_of_shortcuts[target_id] = destination_path
                 else:
-                    self.download_file(target_id, destination_path)
+                    if(target_id in self.family_dict):
+                        self.create_folder_shortcut(destination_path, self.family_dict[target_id])
+                    else:
+                        if self.download_file(target_id, destination_path):
+                            self.family_dict[target_id] = destination_path
+                            self.files_made_instead_of_shortcuts[target_id] = destination_path
+            
             else:
-                self.download_file(item["id"], destination_path)
+                if item["id"] in self.files_made_instead_of_shortcuts:
+                    moved = self.move_file_and_create_shortcut(
+                        self.files_made_instead_of_shortcuts[item["id"]],
+                        destination_path)
+                    if moved:
+                        self.family_dict[item["id"]] = destination_path
+                        self.files_made_instead_of_shortcuts.pop(item["id"], None)
+                else:
+                    if self.download_file(item["id"], destination_path):
+                        self.family_dict[item["id"]] = destination_path
 
 
 def main():

@@ -45,17 +45,36 @@ Choose a different local destination with `--output` (or `-o`):
   `MediaIoBaseDownload`.
 - The utility no longer stores an entire downloaded file in memory before
   writing it, which is important for large files.
+- A failed media request is reported and is not recorded as a successfully
+  materialized Drive item.
+
+### Collision-safe local paths
+
+- Drive item names are not guaranteed to be unique within one Drive folder.
+- Before processing every listed file, folder, or shortcut, the utility checks
+  whether the equivalent local path is already occupied.
+- On a conflict, it preserves the existing path and uses the listed item's full
+  Drive ID in the name, for example `report__<drive-item-id>.pdf` or
+  `Photos__<drive-item-id>`.
+- If that generated name is also occupied, it appends an incrementing suffix.
+- This prevents overwriting local content and ensures `shutil.move()` receives
+  a new destination path instead of moving an item inside an existing folder.
 
 ### Drive shortcuts
 
 - The listing response requests `shortcutDetails(targetId, targetMimeType)`.
-- A shortcut to a normal file downloads the target file at the shortcut's
-  current local path.
-- A shortcut to a folder recursively downloads the target folder beneath a
-  local directory named after the shortcut.
-- A shortcut to an ancestor folder creates a relative local directory symlink
-  instead of repeatedly traversing the same tree. This preserves the alias and
-  prevents infinite recursion.
+- The utility records the local materialization path for each encountered Drive
+  item ID.
+- If a shortcut target was already materialized, the shortcut becomes a
+  relative local symlink to that path.
+- If a shortcut appears before its regular Drive item, the target is first
+  materialized at the shortcut's location. When its regular location is later
+  encountered, the item is moved there and the earlier shortcut location is
+  replaced with a relative symlink.
+- This applies to sibling shortcuts and shortcuts from a parent to one of its
+  children, avoiding duplicate downloads while preserving both local paths.
+- Move failures do not update the stored canonical path or discard the pending
+  shortcut mapping.
 - Missing shortcut metadata is reported and skipped safely.
 - Google Drive does not allow a shortcut to target another shortcut, but the
   code explicitly detects that unexpected MIME type and avoids trying to
@@ -76,23 +95,11 @@ traversal.
 - Add retry logic with exponential backoff for temporary network, quota, and
   rate-limit failures.
 
-### Repeated non-ancestor folder shortcuts
+### Local symlink support
 
-Only folders in the current ancestry path are mapped today. Therefore, if a
-shortcut points to a sibling or another already-downloaded folder, its contents
-are downloaded again at the shortcut's location. This preserves the shortcut's
-position but can duplicate data.
-
-The same applies when a parent folder contains both a real child folder and a
-shortcut pointing to that child. The child is not an ancestor of its parent, so
-the shortcut is expanded into a second local copy rather than becoming a local
-alias. The order in which Drive returns the child and shortcut does not change
-this behavior.
-
-A future optimization can maintain a global mapping from Drive folder ID to
-its first local path. When a later shortcut targets an already-downloaded
-folder, create a local symlink to that path instead of downloading the content
-again. This needs a clear policy for targets that have not yet been downloaded.
+Shortcut preservation relies on local filesystem symlinks. A future version
+should provide a clearer fallback or explicit error handling for platforms and
+directories where creating symlinks is not permitted.
 
 ### File-shortcut names
 
