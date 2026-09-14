@@ -79,6 +79,28 @@ Photos      -> Photos__<drive-item-id>
 
 If that generated name is also occupied, an incrementing suffix is added.
 
+## Organize downloaded ZIP files
+
+The Drive API downloader above remains available as `main.py`. For ZIP files
+already downloaded from Drive, use the separate local organizer instead:
+
+```bash
+python3 zip_organizer.py download-001.zip download-002.zip --output downloads
+```
+
+ZIPs are processed in the supplied order and merge into one shared download
+root: `downloads/organized/`. Paths inside every ZIP are preserved, so files
+from later ZIPs are added to folders made while processing earlier ZIPs. When
+the same relative file path appears more than once, the first ZIP wins and the
+later duplicate is reported.
+
+The organizer creates relative symlinks for `.gshortcut` JSON files that
+provide a relative target path (`targetPath`, `target_path`, `path`, or
+`relativePath`). Shortcuts containing only a Drive item ID or URL are retained
+as `.gshortcut` files and reported, because a normal ZIP export does not carry
+an ID-to-file-path mapping. ZIP paths are validated before extraction and
+cannot write outside the shared download root.
+
 ## Further reading
 
 - [Design analysis and possible approaches](Google%20Drive%20Large%20Folder%20Download%20Utility%20%E2%80%93%20Design%20Analysis.md)
